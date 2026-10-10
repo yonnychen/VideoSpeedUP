@@ -5,16 +5,42 @@ chcp 65001 >nul
 echo 正在处理当前目录下的所有视频文件...
 echo.
 
+echo 请选择加速倍数:
+echo 1. 1.25x
+echo 2. 1.50x
+echo 3. 1.75x
+echo 4. 2.00x
+set /p "CHOICE=请输入 1、2、3 或 4: "
+if not defined CHOICE set "CHOICE=2"
+
+if "%CHOICE%"=="1" (
+    set "SPEED=1.25"
+    set "SPEED_TAG=1.25x"
+) else if "%CHOICE%"=="2" (
+    set "SPEED=1.5"
+    set "SPEED_TAG=1.5x"
+) else if "%CHOICE%"=="3" (
+    set "SPEED=1.75"
+    set "SPEED_TAG=1.75x"
+) else if "%CHOICE%"=="4" (
+    set "SPEED=2.00"
+    set "SPEED_TAG=2.00x"
+) else (
+    echo 无效选项，请输入 1、2、3 或 4。
+    pause
+    exit /b 1
+)
+
 for %%F in (*.mp4 *.mkv *.mov *.flv *.avi) do (
     set "FILENAME=%%~nF"
     
-    :: 检查文件名是否以 _1.5x 结尾，避免重复加速
-    if not "!FILENAME:~-5!"=="_1.5x" (
+    :: 跳过已生成的加速文件，避免重复处理
+    if /i not "!FILENAME:~-6!"=="_1.25x" if /i not "!FILENAME:~-5!"=="_1.5x" if /i not "!FILENAME:~-6!"=="_1.75x" if /i not "!FILENAME:~-6!"=="_2.00x" (
         echo ----------------------------------------------------
         echo 正在处理: "%%F"
         
         set "INPUT=%%F"
-        set "OUTPUT=!FILENAME!_1.5x.mp4"
+        set "OUTPUT=!FILENAME!_!SPEED_TAG!.mp4"
         set "TEMP_RAW=temp_!RANDOM!.264"
 
         :: 1. 用 ffprobe 获取帧率比值（如 25/1 或 30000/1001）
@@ -22,8 +48,8 @@ for %%F in (*.mp4 *.mkv *.mov *.flv *.avi) do (
             set "FPS_RATIO=%%A"
         )
 
-        :: 2. 调用 powershell 精准计算 1.5 倍帧率（避免 CMD 字符转义问题）
-        for /f "usebackq delims=" %%B in (`powershell -NoProfile -Command "([double]('!FPS_RATIO!'.Split('/')[0]) / [double]('!FPS_RATIO!'.Split('/')[1])) * 1.5"`) do (
+        :: 2. 调用 powershell 精准计算所选倍速对应的新帧率
+        for /f "usebackq delims=" %%B in (`powershell -NoProfile -Command "$fps = ([double]('!FPS_RATIO!'.Split('/')[0]) / [double]('!FPS_RATIO!'.Split('/')[1])) * [double]'!SPEED!'; $fps.ToString('0.########', [Globalization.CultureInfo]::InvariantCulture)"`) do (
             set "NEW_FPS=%%B"
         )
 
@@ -32,8 +58,8 @@ for %%F in (*.mp4 *.mkv *.mov *.flv *.avi) do (
         :: 3. 提取 H.264 裸流（加入 h264_mp4toannexb 滤镜，补齐 SPS/PPS 头部）
         ffmpeg -y -v error -i "!INPUT!" -an -c:v copy -bsf:v h264_mp4toannexb "!TEMP_RAW!"
 
-        :: 4. 以新帧率无损封装，同时将音频加速 1.5 倍
-        ffmpeg -y -v fatal -r !NEW_FPS! -i "!TEMP_RAW!" -i "!INPUT!" -map 0:v -map 1:a? -c:v copy -filter:a "atempo=1.5" "!OUTPUT!"
+        :: 4. 以新帧率无损封装，同时按相同倍速加速音频
+        ffmpeg -y -v fatal -r !NEW_FPS! -i "!TEMP_RAW!" -i "!INPUT!" -map 0:v -map 1:a? -c:v copy -filter:a "atempo=!SPEED!" "!OUTPUT!"
 
         :: 5. 删除临时裸流
         if exist "!TEMP_RAW!" del "!TEMP_RAW!"
